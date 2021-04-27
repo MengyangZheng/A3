@@ -1,0 +1,180 @@
+***Mengyang Zheng HW3 4/26/2021***
+
+***Exercise 2: Data Manipulation***
+
+```{r}
+rm(list=ls())
+#install.packages("lattice")
+setwd("C:/Users/bobme/Desktop/ECON 613/Homework/A3/Data")
+
+crime <- read.csv("C:/Users/bobme/Desktop/ECON 613/Homework/A3/Data/crime_long.csv", stringsAsFactors=TRUE)
+officer <- read.csv("C:/Users/bobme/Desktop/ECON 613/Homework/A3/Data/officers.csv", stringsAsFactors=TRUE)
+pop <- read.csv("C:/Users/bobme/Desktop/ECON 613/Homework/A3/Data/population.csv", stringsAsFactors=TRUE)
+```
+
+```{r}
+#Calculate total crime per month and plot the time series of crime
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(lattice)
+
+#crime$crime_month=as.Date(crime$crime_month,format="%y/%m/%d")
+des1=crime %>%
+  group_by(crime_month)%>%
+  summarise(
+    tot_crime_per_month=sum(crimes)
+  )
+
+xyplot(des1$tot_crime_per_month~des1$crime_month,type=c("l","p"))
+```
+```{r}
+#Merge the two datasets
+pop=rename(pop,crime_month=month)
+
+crime$merger=paste0(crime$crime_month,crime$district)
+crime0= crime %>%
+  group_by(merger,crime_type) %>%
+  summarise(
+    tot_crime=sum(crimes),.groups="drop"
+  )
+crime$merger1=paste0(crime$merger,crime$crime_type)
+crime0$merger1=paste0(crime0$merger,crime0$crime_type)
+crime0$merger=NULL
+crime0$crime_type=NULL
+crime=merge(crime,crime0,by="merger1")
+crime0=NULL
+crime=crime[!duplicated(crime[,c("merger1")]),]
+crime$merger1=NULL
+crime$crimes=NULL
+pop$merger=paste0(pop$crime_month,pop$district)
+crime1=crime
+crime1$crime_month=NULL
+crime1$district=NULL
+panel=merge(pop,crime1,by="merger")
+
+```
+
+```{r}
+#Construct a panel data
+panel1=panel
+des2=panel1 %>%
+  group_by(merger) %>%
+  summarise(
+    tot_crime_per_res=sum(tot_crime)/tot_pop,
+    vio_crime_per_res=sum(tot_crime[crime_type=="violent"])/tot_pop,
+    prop_crime_per_res=sum(tot_crime[crime_type=="property"])/tot_pop,
+    share_black=tot_black/tot_pop,
+    share_white=tot_white/tot_pop,
+    share_hisp=tot_hisp/tot_pop,
+    .groups="drop"
+  )
+panel1=merge(panel1,des2,by="merger")
+panel1=panel1[,c(1:4,9,12:17)]
+panel1=panel1[!duplicated(panel1[,c("merger")]),]
+panel1$merger=NULL
+panel1[,c(5:10)]=round(panel1[,c(5:10)],digits=4)
+panel1=panel1[order(panel1$crime_month,panel1$district),]
+
+head(panel1,20)
+```
+
+***Exercise 3: Panel Data: Introduction***
+```{r}
+panel2=left_join(panel1,officer,by=c("crime_month" = "month", "district" = "unit"))
+panel2=drop_na(panel2)
+```
+
+```{r}
+ex3model=lm(arrest~tenure+p50_inc+tot_crime_per_res+share_black+share_white+share_hisp-1,data=panel2)
+summary(ex3model)
+```
+
+***Exercise 4: Panel Data: More Controls***
+```{r}
+ex4model=lm(arrest~tenure+p50_inc+tot_crime_per_res+share_black+share_white+share_hisp+factor(district)+factor(crime_month)-1,data=panel2)
+summary(ex4model)
+```
+
+
+***Exercise 5: Panel Data: Individual Fixed Effects***
+```{r}
+between=panel2 %>%
+  group_by(NUID) %>%
+  summarise(mean_arrest=mean(arrest),
+            mean_tenure=mean(tenure),
+            mean_tot_crime=mean(tot_crime_per_res),
+            mean_median=mean(p50_inc),
+            mean_share_black=mean(share_black),
+            mean_share_white=mean(share_white),
+            mean_share_hisp=mean(share_hisp))
+
+between_est=lm(mean_arrest~mean_tenure+mean_tot_crime+mean_median+ mean_share_black+mean_share_white+mean_share_hisp,data=between)
+summary(between_est)
+```
+
+```{r}
+within=panel2 %>%
+  group_by(NUID)%>%
+  summarise(meandiff_arrest=arrest-mean(arrest),
+            meandiff_tenure=tenure-mean(tenure),
+            meandiff_tot_crime=tot_crime_per_res-mean(tot_crime_per_res),
+            meandiff_median=p50_inc-mean(p50_inc),
+            meandiff_share_black=share_black-mean(share_black),
+            meandiff_share_white=share_white-mean(share_white),
+            meandiff_share_hisp=share_hisp-mean(share_hisp))
+within_est=lm(meandiff_arrest~meandiff_tenure+meandiff_tot_crime+meandiff_median+ meandiff_share_black+meandiff_share_white+meandiff_share_hisp,data=within)
+summary(within_est)
+```
+
+```{r}
+firstdiff=panel2 %>%
+  group_by(NUID)%>%
+  summarise(meandiff2_arrest=lag(arrest),
+            meandiff2_tenure=lag(tenure),
+            meandiff2_tot_crime=lag(tot_crime_per_res),
+            meandiff2_median=lag(p50_inc),
+            meandiff2_share_black=lag(share_black),
+            meandiff2_share_white=lag(share_white),
+            meandiff2_share_hisp=lag(share_hisp),
+            .groups="drop",
+            order_by=crime_month)
+firstdiff=drop_na(firstdiff)
+firstdiff_est=lm(meandiff2_arrest~meandiff2_tenure+meandiff2_tot_crime+meandiff2_median+ meandiff2_share_black+meandiff2_share_white+meandiff2_share_hisp,data=firstdiff)
+summary(firstdiff_est)
+```
+
+```{r}
+#However I could not add in the individual fixed effects above since it is too large to run, so instead I use plm for calculation
+between1= plm(arrest~tenure+p50_inc+tot_crime_per_res+share_black+share_white+share_hisp+factor(crime_month)+factor(district),index="NUID",model="between",data=panel2)
+summary(between1)
+```
+
+```{r}
+within1= plm(arrest~tenure+p50_inc+tot_crime_per_res+share_black+share_white+share_hisp+factor(crime_month)+factor(district),index="NUID",model="within",data=panel2)
+summary(within1)
+```
+
+```{r}
+firstdiff1= plm(arrest~tenure+p50_inc+tot_crime_per_res+share_black+share_white+share_hisp+factor(crime_month)+factor(district),index="NUID",model="fd",data=panel2)
+summary(firstdiff1)
+```
+
+```{r}
+#Use a GMM approach to estimate all parameters in 1 step
+#Do not know why it keeps giving me errors, do not know how to fix it
+panel2=unique(panel2)
+ex5model=pgmm(formula=arrest~tenure+p50_inc+tot_crime_per_res+share_black+share_white+share_hisp|crime_month+district+NUID,data=panel2,effect="individual",model="onestep")
+summary(ex5model)
+```
+
+```{r}
+#betahat=(X'ZWZ'X)^(-1)(X'ZWZ'Y) for OLS solution by GMM
+#I do not know how to debug this but just want to give an idea, plus the data is very large, it cannot be done through my computer
+gmm=function(theta,x,momentFun){
+  avg=colMeans(momentFun(theta,x))
+  sum(avg^2)
+}
+init=0
+optim(init,gmm,x=panel2,moment=sum(panel2)/nrow(panel2),control=list(reltol=1e-19,maxit=20000))$par
+```
